@@ -1,0 +1,676 @@
+--[[
+    Undetek Script - Advanced Triggerbot for Roblox
+    Features:
+    - Right Shift to toggle GUI
+    - Triggerbot only fires when crosshair is directly on player (no walls)
+    - Wallcheck ensures no shooting through objects
+    - Clean console (no prints)
+]]
+
+-- Create GUI elements (matching the image style)
+local player = game.Players.LocalPlayer
+local mouse = player:GetMouse()
+local runService = game:GetService("RunService")
+local userInputService = game:GetService("UserInputService")
+
+-- Services for wallcheck
+local camera = workspace.CurrentCamera
+local players = game:GetService("Players")
+
+-- Configuration table
+local settings = {
+    masterEnabled = true,
+    guiVisible = true,
+    
+    -- Ambot (Triggerbot) settings
+    ambot = {
+        enabled = true,
+        targetTeam = "Enemy",
+        key = "RightMouseButton",
+        visibilityCheck = true,
+        hitbox = "Head",
+        recoilControl = false,
+        smooth = 0,
+        triggerbot = {
+            enabled = true,
+            targetTeam = "Enemy",
+            key = "RightMouseButton",
+            delay = 0,
+            holdTime = 0,
+            fireMode = "Hold"
+        }
+    },
+    
+    -- Visuals (ESP)
+    visuals = {
+        enabled = true,
+        enemy = {
+            boxes = true,
+            bones = false,
+            extras = true
+        },
+        team = {
+            boxes = false,
+            bones = false,
+            extras = false
+        },
+        radar = {
+            showTeam = true,
+            size = 150
+        }
+    }
+}
+
+-- State variables
+local aimingAtPlayer = false
+local currentTarget = nil
+local lastShotTime = 0
+local holdingM1 = false
+local rightMouseDown = false
+local triggerActive = false
+
+-- Create ScreenGui
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "UndetekGUI"
+screenGui.Parent = player.PlayerGui
+
+-- Main Frame (Dark background)
+local mainFrame = Instance.new("Frame")
+mainFrame.Size = UDim2.new(0, 320, 0, 500)
+mainFrame.Position = UDim2.new(0, 10, 0, 10)
+mainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+mainFrame.BackgroundTransparency = 0.05
+mainFrame.BorderSizePixel = 0
+mainFrame.Parent = screenGui
+
+-- Title Bar
+local titleBar = Instance.new("Frame")
+titleBar.Size = UDim2.new(1, 0, 0, 30)
+titleBar.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
+titleBar.BorderSizePixel = 0
+titleBar.Parent = mainFrame
+
+local titleLabel = Instance.new("TextLabel")
+titleLabel.Size = UDim2.new(1, 0, 1, 0)
+titleLabel.BackgroundTransparency = 1
+titleLabel.Text = "UNDETEK"
+titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+titleLabel.TextSize = 18
+titleLabel.Font = Enum.Font.GothamBold
+titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+titleLabel.Position = UDim2.new(0, 10, 0, 0)
+titleLabel.Parent = titleBar
+
+-- Scrolling Frame for content
+local scrollingFrame = Instance.new("ScrollingFrame")
+scrollingFrame.Size = UDim2.new(1, 0, 1, -30)
+scrollingFrame.Position = UDim2.new(0, 0, 0, 30)
+scrollingFrame.BackgroundTransparency = 1
+scrollingFrame.BorderSizePixel = 0
+scrollingFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+scrollingFrame.ScrollBarThickness = 6
+scrollingFrame.Parent = mainFrame
+
+local canvasLayout = Instance.new("UIListLayout")
+canvasLayout.Padding = UDim.new(0, 8)
+canvasLayout.SortOrder = Enum.SortOrder.LayoutOrder
+canvasLayout.Parent = scrollingFrame
+
+-- Helper function to create sections
+local function createSection(parent, title, order)
+    local section = Instance.new("Frame")
+    section.Size = UDim2.new(1, -10, 0, 0)
+    section.BackgroundTransparency = 1
+    section.LayoutOrder = order
+    section.Parent = parent
+    
+    local titleLabel = Instance.new("TextLabel")
+    titleLabel.Size = UDim2.new(1, 0, 0, 24)
+    titleLabel.BackgroundTransparency = 1
+    titleLabel.Text = title
+    titleLabel.TextColor3 = Color3.fromRGB(100, 150, 255)
+    titleLabel.TextSize = 14
+    titleLabel.Font = Enum.Font.GothamBold
+    titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+    titleLabel.Parent = section
+    
+    local content = Instance.new("Frame")
+    content.Size = UDim2.new(1, 0, 0, 0)
+    content.BackgroundTransparency = 1
+    content.Parent = section
+    
+    local layout = Instance.new("UIListLayout")
+    layout.Padding = UDim.new(0, 6)
+    layout.SortOrder = Enum.SortOrder.LayoutOrder
+    layout.Parent = content
+    
+    return content, layout, section
+end
+
+-- Helper function to create toggle
+local function createToggle(parent, labelText, bindVar, order)
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(1, 0, 0, 30)
+    frame.BackgroundTransparency = 1
+    frame.LayoutOrder = order
+    frame.Parent = parent
+    
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(0.7, 0, 1, 0)
+    label.BackgroundTransparency = 1
+    label.Text = labelText
+    label.TextColor3 = Color3.fromRGB(200, 200, 200)
+    label.TextSize = 13
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Font = Enum.Font.Gotham
+    label.Parent = frame
+    
+    local toggleBtn = Instance.new("TextButton")
+    toggleBtn.Size = UDim2.new(0, 50, 0, 24)
+    toggleBtn.Position = UDim2.new(1, -55, 0.5, -12)
+    toggleBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
+    toggleBtn.Text = "OFF"
+    toggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    toggleBtn.TextSize = 12
+    toggleBtn.Font = Enum.Font.Gotham
+    toggleBtn.Parent = frame
+    
+    local updateToggle = function()
+        if bindVar then
+            toggleBtn.BackgroundColor3 = Color3.fromRGB(80, 180, 80)
+            toggleBtn.Text = "ON"
+        else
+            toggleBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
+            toggleBtn.Text = "OFF"
+        end
+    end
+    
+    toggleBtn.MouseButton1Click:Connect(function()
+        bindVar = not bindVar
+        updateToggle()
+    end)
+    
+    updateToggle()
+    return frame, function() return bindVar end
+end
+
+-- Helper function to create dropdown
+local function createDropdown(parent, labelText, options, bindVarPath, order)
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(1, 0, 0, 36)
+    frame.BackgroundTransparency = 1
+    frame.LayoutOrder = order
+    frame.Parent = parent
+    
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(1, 0, 0, 18)
+    label.BackgroundTransparency = 1
+    label.Text = labelText
+    label.TextColor3 = Color3.fromRGB(200, 200, 200)
+    label.TextSize = 12
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Font = Enum.Font.Gotham
+    label.Parent = frame
+    
+    local dropdownBtn = Instance.new("TextButton")
+    dropdownBtn.Size = UDim2.new(1, 0, 0, 24)
+    dropdownBtn.Position = UDim2.new(0, 0, 0, 18)
+    dropdownBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+    dropdownBtn.Text = bindVarPath
+    dropdownBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    dropdownBtn.TextSize = 12
+    dropdownBtn.Font = Enum.Font.Gotham
+    dropdownBtn.Parent = frame
+    
+    local dropdownList = Instance.new("Frame")
+    dropdownList.Size = UDim2.new(1, 0, 0, 0)
+    dropdownList.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+    dropdownList.Visible = false
+    dropdownList.Parent = frame
+    
+    local listLayout = Instance.new("UIListLayout")
+    listLayout.Padding = UDim.new(0, 2)
+    listLayout.Parent = dropdownList
+    
+    for _, opt in ipairs(options) do
+        local optBtn = Instance.new("TextButton")
+        optBtn.Size = UDim2.new(1, 0, 0, 24)
+        optBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+        optBtn.Text = opt
+        optBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        optBtn.TextSize = 12
+        optBtn.Font = Enum.Font.Gotham
+        optBtn.Parent = dropdownList
+        optBtn.MouseButton1Click:Connect(function()
+            dropdownBtn.Text = opt
+            dropdownList.Visible = false
+        end)
+    end
+    
+    dropdownBtn.MouseButton1Click:Connect(function()
+        dropdownList.Visible = not dropdownList.Visible
+        if dropdownList.Visible then
+            local count = #options
+            dropdownList.Size = UDim2.new(1, 0, 0, count * 26)
+        end
+    end)
+    
+    return frame
+end
+
+-- Helper function to create slider
+local function createSlider(parent, labelText, minVal, maxVal, bindVar, order)
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(1, 0, 0, 40)
+    frame.BackgroundTransparency = 1
+    frame.LayoutOrder = order
+    frame.Parent = parent
+    
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(1, 0, 0, 18)
+    label.BackgroundTransparency = 1
+    label.Text = labelText
+    label.TextColor3 = Color3.fromRGB(200, 200, 200)
+    label.TextSize = 12
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Font = Enum.Font.Gotham
+    label.Parent = frame
+    
+    local valueLabel = Instance.new("TextLabel")
+    valueLabel.Size = UDim2.new(0.3, 0, 0, 18)
+    valueLabel.Position = UDim2.new(0.7, 0, 0, 0)
+    valueLabel.BackgroundTransparency = 1
+    valueLabel.Text = tostring(bindVar)
+    valueLabel.TextColor3 = Color3.fromRGB(150, 150, 150)
+    valueLabel.TextSize = 12
+    valueLabel.TextXAlignment = Enum.TextXAlignment.Right
+    valueLabel.Font = Enum.Font.Gotham
+    valueLabel.Parent = frame
+    
+    local slider = Instance.new("Frame")
+    slider.Size = UDim2.new(1, 0, 0, 4)
+    slider.Position = UDim2.new(0, 0, 0, 26)
+    slider.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
+    slider.Parent = frame
+    
+    local fill = Instance.new("Frame")
+    fill.Size = UDim2.new((bindVar - minVal) / (maxVal - minVal), 0, 1, 0)
+    fill.BackgroundColor3 = Color3.fromRGB(100, 150, 255)
+    fill.BorderSizePixel = 0
+    fill.Parent = slider
+    
+    local function updateSlider(value)
+        local newVal = math.clamp(value, minVal, maxVal)
+        bindVar = newVal
+        valueLabel.Text = tostring(newVal)
+        fill.Size = UDim2.new((newVal - minVal) / (maxVal - minVal), 0, 1, 0)
+    end
+    
+    slider.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            while userInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) do
+                local x = (input.Position.X - slider.AbsolutePosition.X) / slider.AbsoluteSize.X
+                local val = minVal + (maxVal - minVal) * math.clamp(x, 0, 1)
+                updateSlider(val)
+                runService.RenderStepped:Wait()
+            end
+        end
+    end)
+    
+    return frame
+end
+
+-- Build the GUI based on the image
+local mainContent, mainLayout, _ = createSection(scrollingFrame, "A Assist", 1)
+
+-- Master Switch
+local masterFrame = Instance.new("Frame")
+masterFrame.Size = UDim2.new(1, 0, 0, 40)
+masterFrame.BackgroundTransparency = 1
+masterFrame.LayoutOrder = 1
+masterFrame.Parent = mainContent
+
+local masterLabel = Instance.new("TextLabel")
+masterLabel.Size = UDim2.new(0.6, 0, 1, 0)
+masterLabel.BackgroundTransparency = 1
+masterLabel.Text = "Master Switch"
+masterLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+masterLabel.TextSize = 14
+masterLabel.Font = Enum.Font.GothamBold
+masterLabel.TextXAlignment = Enum.TextXAlignment.Left
+masterLabel.Parent = masterFrame
+
+local masterToggle = Instance.new("TextButton")
+masterToggle.Size = UDim2.new(0, 60, 0, 28)
+masterToggle.Position = UDim2.new(1, -65, 0.5, -14)
+masterToggle.BackgroundColor3 = Color3.fromRGB(80, 180, 80)
+masterToggle.Text = "ON"
+masterToggle.TextColor3 = Color3.fromRGB(255, 255, 255)
+masterToggle.TextSize = 13
+masterToggle.Font = Enum.Font.Gotham
+masterToggle.Parent = masterFrame
+
+masterToggle.MouseButton1Click:Connect(function()
+    settings.masterEnabled = not settings.masterEnabled
+    if settings.masterEnabled then
+        masterToggle.BackgroundColor3 = Color3.fromRGB(80, 180, 80)
+        masterToggle.Text = "ON"
+    else
+        masterToggle.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
+        masterToggle.Text = "OFF"
+    end
+end)
+
+-- Ambot Section
+local ambotContent, ambotLayout, ambotSection = createSection(mainContent, "Ambot", 2)
+
+local ambotEnabledFrame, getAmbotEnabled = createToggle(ambotContent, "Enabled", settings.ambot.enabled, 1)
+local targetTeamFrame = createDropdown(ambotContent, "Target Team", {"Enemy", "Team", "All"}, "Enemy", 2)
+local selectKeyFrame = createDropdown(ambotContent, "Select Key", {"RightMouseButton", "LeftMouseButton", "MiddleMouseButton", "Q", "E", "X"}, "RightMouseButton", 3)
+local visibilityFrame, getVisibility = createToggle(ambotContent, "Visibility Check", settings.ambot.visibilityCheck, 4)
+local hitboxFrame = createDropdown(ambotContent, "Select Hitbox", {"Head", "Torso", "HumanoidRootPart"}, "Head", 5)
+local recoilFrame, getRecoil = createToggle(ambotContent, "Recoil Control", settings.ambot.recoilControl, 6)
+local smoothSlider = createSlider(ambotContent, "Smooth", 0, 100, settings.ambot.smooth, 7)
+
+-- Triggerbot Section
+local triggerContent, triggerLayout, triggerSection = createSection(mainContent, "Triggerbot", 3)
+
+local triggerEnabledFrame, getTriggerEnabled = createToggle(triggerContent, "Enable", settings.ambot.triggerbot.enabled, 1)
+local triggerTargetFrame = createDropdown(triggerContent, "Target Team", {"Enemy", "Team", "All"}, "Enemy", 2)
+local triggerKeyFrame = createDropdown(triggerContent, "Select Key", {"RightMouseButton", "LeftMouseButton"}, "RightMouseButton", 3)
+local delaySlider = createSlider(triggerContent, "Delay (ms)", 0, 500, settings.ambot.triggerbot.delay, 4)
+
+-- Visuals Section
+local visualsContent, visualsLayout, visualsSection = createSection(mainContent, "Visuals", 4)
+
+local visualsEnabledFrame, getVisualsEnabled = createToggle(visualsContent, "Enabled", settings.visuals.enabled, 1)
+
+local enemyFrame = Instance.new("Frame")
+enemyFrame.Size = UDim2.new(1, 0, 0, 0)
+enemyFrame.BackgroundTransparency = 1
+enemyFrame.LayoutOrder = 2
+enemyFrame.Parent = visualsContent
+
+local enemyLabel = Instance.new("TextLabel")
+enemyLabel.Size = UDim2.new(1, 0, 0, 20)
+enemyLabel.BackgroundTransparency = 1
+enemyLabel.Text = "Enemy"
+enemyLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+enemyLabel.TextSize = 12
+enemyLabel.Font = Enum.Font.GothamBold
+enemyLabel.TextXAlignment = Enum.TextXAlignment.Left
+enemyLabel.Parent = enemyFrame
+
+local enemyOptions = Instance.new("Frame")
+enemyOptions.Size = UDim2.new(1, 0, 0, 0)
+enemyOptions.BackgroundTransparency = 1
+enemyOptions.Parent = enemyFrame
+
+local enemyLayout = Instance.new("UIListLayout")
+enemyLayout.Padding = UDim.new(0, 4)
+enemyLayout.SortOrder = Enum.SortOrder.LayoutOrder
+enemyLayout.Parent = enemyOptions
+
+local boxesToggle, _ = createToggle(enemyOptions, "Boxes", settings.visuals.enemy.boxes, 1)
+local bonesToggle, _ = createToggle(enemyOptions, "Bones", settings.visuals.enemy.bones, 2)
+local extrasToggle, _ = createToggle(enemyOptions, "Extras", settings.visuals.enemy.extras, 3)
+
+local teamFrame = Instance.new("Frame")
+teamFrame.Size = UDim2.new(1, 0, 0, 0)
+teamFrame.BackgroundTransparency = 1
+teamFrame.LayoutOrder = 3
+teamFrame.Parent = visualsContent
+
+local teamLabel = Instance.new("TextLabel")
+teamLabel.Size = UDim2.new(1, 0, 0, 20)
+teamLabel.BackgroundTransparency = 1
+teamLabel.Text = "Team"
+teamLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+teamLabel.TextSize = 12
+teamLabel.Font = Enum.Font.GothamBold
+teamLabel.TextXAlignment = Enum.TextXAlignment.Left
+teamLabel.Parent = teamFrame
+
+local teamOptions = Instance.new("Frame")
+teamOptions.Size = UDim2.new(1, 0, 0, 0)
+teamOptions.BackgroundTransparency = 1
+teamOptions.Parent = teamFrame
+
+local teamLayout = Instance.new("UIListLayout")
+teamLayout.Padding = UDim.new(0, 4)
+teamLayout.SortOrder = Enum.SortOrder.LayoutOrder
+teamLayout.Parent = teamOptions
+
+local teamBoxesToggle, _ = createToggle(teamOptions, "Boxes", settings.visuals.team.boxes, 1)
+local teamBonesToggle, _ = createToggle(teamOptions, "Bones", settings.visuals.team.bones, 2)
+local teamExtrasToggle, _ = createToggle(teamOptions, "Extras", settings.visuals.team.extras, 3)
+
+-- Adjust canvas size
+local function updateCanvasSize()
+    local totalHeight = 0
+    for _, child in ipairs(mainContent:GetChildren()) do
+        if child:IsA("Frame") and child.LayoutOrder then
+            totalHeight = totalHeight + child.AbsoluteSize.Y + 8
+        end
+    end
+    scrollingFrame.CanvasSize = UDim2.new(0, 0, 0, totalHeight + 50)
+end
+
+runService.RenderStepped:Connect(function()
+    updateCanvasSize()
+end)
+
+-- ========== TRIGGERBOT CORE LOGIC ==========
+-- Function to get player at crosshair with ACCURATE wallcheck (won't shoot through walls)
+
+local function getPlayerAtCrosshair()
+    local screenCenter = Vector2.new(camera.ViewportSize.X / 2, camera.ViewportSize.Y / 2)
+    local ray = camera:ScreenPointToRay(screenCenter.X, screenCenter.Y)
+    
+    local ignoreList = {player.Character}
+    local hit, hitPosition, hitNormal, hitMaterial = workspace:FindPartOnRayWithIgnoreList(Ray.new(ray.Origin, ray.Direction * 1000), ignoreList)
+    
+    if hit and hit.Parent then
+        -- Check if we hit a player directly
+        local hitCharacter = hit:FindFirstAncestorWhichIsA("Model")
+        if hitCharacter and hitCharacter:FindFirstChild("Humanoid") then
+            local targetPlayer = players:GetPlayerFromCharacter(hitCharacter)
+            if targetPlayer and targetPlayer ~= player then
+                -- Check target team setting
+                local targetTeamSetting = settings.ambot.targetTeam
+                local isEnemy = targetPlayer.Team ~= player.Team
+                
+                if targetTeamSetting == "Enemy" and not isEnemy then
+                    return nil
+                end
+                if targetTeamSetting == "Team" and isEnemy then
+                    return nil
+                end
+                return targetPlayer
+            end
+        end
+    end
+    
+    -- If visibility check is enabled and we didn't hit a player directly, check if there's a player behind obstacles
+    if settings.ambot.visibilityCheck then
+        local closestPlayer = nil
+        local closestDistance = math.huge
+        
+        for _, plr in ipairs(players:GetPlayers()) do
+            if plr ~= player and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") then
+                local targetHitbox = plr.Character:FindFirstChild(settings.ambot.hitbox) or plr.Character:FindFirstChild("HumanoidRootPart")
+                if targetHitbox then
+                    local targetPos = targetHitbox.Position
+                    local direction = (targetPos - camera.CFrame.Position).Unit
+                    local distanceToTarget = (targetPos - camera.CFrame.Position).Magnitude
+                    
+                    -- Cast ray from camera to player's hitbox
+                    local rayToPlayer = Ray.new(camera.CFrame.Position, direction * distanceToTarget)
+                    local hitObstacle, hitPos = workspace:FindPartOnRayWithIgnoreList(rayToPlayer, ignoreList)
+                    
+                    -- Check if the ray hit the player directly
+                    local hitCharacter = hitObstacle and hitObstacle:FindFirstAncestorWhichIsA("Model")
+                    if hitCharacter == plr.Character then
+                        -- Check if crosshair is on this player
+                        local screenPos, onScreen = camera:WorldToScreenPoint(targetPos)
+                        if onScreen then
+                            local distToCenter = (Vector2.new(screenPos.X, screenPos.Y) - screenCenter).Magnitude
+                            if distToCenter < 50 and distToCenter < closestDistance then
+                                -- Check target team setting
+                                local targetTeamSetting = settings.ambot.targetTeam
+                                local isEnemy = plr.Team ~= player.Team
+                                
+                                if targetTeamSetting == "Enemy" and isEnemy then
+                                    closestPlayer = plr
+                                    closestDistance = distToCenter
+                                elseif targetTeamSetting == "Team" and not isEnemy then
+                                    closestPlayer = plr
+                                    closestDistance = distToCenter
+                                elseif targetTeamSetting == "All" then
+                                    closestPlayer = plr
+                                    closestDistance = distToCenter
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        
+        return closestPlayer
+    end
+    
+    return nil
+end
+
+-- Mouse input handling
+local virtualInput = game:GetService("VirtualInputManager")
+
+local function simulateMouseButton(button, state)
+    if button == Enum.UserInputType.MouseButton1 then
+        if state then
+            virtualInput:SendMouseButtonEvent(0, 0, 0, true, Enum.UserInputType.MouseButton1, false)
+            holdingM1 = true
+        else
+            virtualInput:SendMouseButtonEvent(0, 0, 0, false, Enum.UserInputType.MouseButton1, false)
+            holdingM1 = false
+        end
+    end
+end
+
+-- Triggerbot logic
+local function onTrigger()
+    if not settings.masterEnabled then return end
+    if not settings.ambot.triggerbot.enabled then return end
+    if not rightMouseDown then return end
+    
+    local target = getPlayerAtCrosshair()
+    if target then
+        local currentTime = tick() * 1000
+        if currentTime - lastShotTime >= settings.ambot.triggerbot.delay then
+            lastShotTime = currentTime
+            
+            if not holdingM1 then
+                simulateMouseButton(Enum.UserInputType.MouseButton1, true)
+            end
+        end
+    else
+        if holdingM1 then
+            simulateMouseButton(Enum.UserInputType.MouseButton1, false)
+        end
+    end
+end
+
+-- Input handling for right mouse button
+userInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if input.UserInputType == Enum.UserInputType.MouseButton2 then
+        rightMouseDown = true
+        triggerActive = true
+    end
+end)
+
+userInputService.InputEnded:Connect(function(input, gameProcessed)
+    if input.UserInputType == Enum.UserInputType.MouseButton2 then
+        rightMouseDown = false
+        triggerActive = false
+        if holdingM1 then
+            simulateMouseButton(Enum.UserInputType.MouseButton1, false)
+        end
+    end
+end)
+
+-- Right Shift to toggle GUI visibility
+userInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if input.KeyCode == Enum.KeyCode.RightShift then
+        settings.guiVisible = not settings.guiVisible
+        screenGui.Enabled = settings.guiVisible
+    end
+end)
+
+-- Main loop
+runService.RenderStepped:Connect(function()
+    if triggerActive and settings.masterEnabled and settings.ambot.triggerbot.enabled then
+        onTrigger()
+    end
+end)
+
+-- Simple ESP implementation
+local espObjects = {}
+
+local function updateESP()
+    if not settings.visuals.enabled then
+        for _, obj in pairs(espObjects) do
+            pcall(function() obj:Destroy() end)
+        end
+        espObjects = {}
+        return
+    end
+    
+    for _, obj in pairs(espObjects) do
+        pcall(function() obj:Destroy() end)
+    end
+    espObjects = {}
+    
+    for _, plr in ipairs(players:GetPlayers()) do
+        if plr ~= player and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") then
+            local isEnemy = plr.Team ~= player.Team
+            local showBoxes = (isEnemy and settings.visuals.enemy.boxes) or (not isEnemy and settings.visuals.team.boxes)
+            
+            if showBoxes then
+                local rootPart = plr.Character.HumanoidRootPart
+                local screenPos, onScreen = camera:WorldToScreenPoint(rootPart.Position)
+                if onScreen then
+                    local box = Instance.new("Frame")
+                    box.Size = UDim2.new(0, 50, 0, 100)
+                    box.Position = UDim2.new(0, screenPos.X - 25, 0, screenPos.Y - 50)
+                    box.BackgroundTransparency = 0.7
+                    box.BackgroundColor3 = isEnemy and Color3.fromRGB(255, 0, 0) or Color3.fromRGB(0, 255, 0)
+                    box.BorderSizePixel = 1
+                    box.BorderColor3 = Color3.fromRGB(255, 255, 255)
+                    box.Parent = screenGui
+                    table.insert(espObjects, box)
+                    
+                    local nameLabel = Instance.new("TextLabel")
+                    nameLabel.Size = UDim2.new(1, 0, 0, 16)
+                    nameLabel.Position = UDim2.new(0, 0, 1, 0)
+                    nameLabel.BackgroundTransparency = 1
+                    nameLabel.Text = plr.Name
+                    nameLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+                    nameLabel.TextSize = 10
+                    nameLabel.Font = Enum.Font.Gotham
+                    nameLabel.Parent = box
+                    table.insert(espObjects, nameLabel)
+                end
+            end
+        end
+    end
+end
+
+runService.RenderStepped:Connect(function()
+    updateESP()
+end)
+
+-- Initialize GUI visibility
+screenGui.Enabled = true
